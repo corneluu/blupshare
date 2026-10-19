@@ -1,13 +1,17 @@
 import { useEffect, useRef, type RefObject } from 'react'
-import { LngLatBounds, Map as MlMap, Marker } from 'maplibre-gl'
+import { LngLatBounds, Map as MlMap, Marker, setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Meeting } from '../lib/types'
 
 // OpenFreeMap: free vector tiles, no API key
 const STYLE = {
   light: 'https://tiles.openfreemap.org/styles/liberty',
-  dark: 'https://tiles.openfreemap.org/styles/dark',
+  dark: 'https://tiles.openfreemap.org/styles/fiord',
 }
+// MapLibre 6 looks for its worker next to its own file, which bundling breaks
+setWorkerUrl(workerUrl)
+
 const TIMISOARA: [number, number] = [21.2257, 45.7537]
 
 export type Pin = { id: string; lat: number; lng: number; color: string; label: string; initial: string; isMe: boolean; stale: boolean }
@@ -119,5 +123,10 @@ export default function MapView({ pins, meeting, dark, picking, onPick, fitKey, 
     meetMarker.current!.setLngLat([meeting.lng, meeting.lat]).addTo(map)
   }, [meeting, mapRef])
 
-  return <div ref={box} className="absolute inset-0" />
+  // maplibre-gl.css forces position:relative on the map element, so the positioning lives on a wrapper
+  return (
+    <div className="absolute inset-0">
+      <div ref={box} className="h-full w-full" />
+    </div>
+  )
 }
