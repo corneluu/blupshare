@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from './supabase'
 
 export type GeoState = 'off' | 'on' | 'denied' | 'unsupported'
@@ -13,9 +13,13 @@ function distanceM(a: Fix, b: Fix) {
 
 // Sends my position while the page is open and `active` is true.
 // shortcut: fixed 25 m / 60 s throttle + 2 min heartbeat; Phase 4 adds battery- and speed-aware rules
-export function useGeoSharing(active: boolean, userId: string) {
+export function useGeoSharing(active: boolean, userId: string, shareSpeed: boolean) {
+  const speedOk = useRef(shareSpeed) // read at send time so toggling it doesn't restart the GPS watch
+  useEffect(() => {
+    speedOk.current = shareSpeed
+  }, [shareSpeed])
   const [state, setState] = useState<GeoState>('off')
-  const [me, setMe] = useState<{ lat: number; lng: number; updated_at: string } | null>(null)
+  const [me, setMe] = useState<{ lat: number; lng: number; accuracy: number; speed: number | null; updated_at: string } | null>(null)
 
   useEffect(() => {
     if (!active || !supabase) return setState('off')
@@ -26,7 +30,7 @@ export function useGeoSharing(active: boolean, userId: string) {
     const send = (f: Fix) => {
       sent = { ...f, t: Date.now() }
       db.from('locations')
-        .upsert({ user_id: userId, lat: f.lat, lng: f.lng, accuracy: f.accuracy, speed: f.speed })
+        .upsert({ user_id: userId, lat: f.lat, lng: f.lng, accuracy: f.accuracy, speed: speedOk.current ? f.speed : null })
         .then(({ error }) => error && console.warn('location upsert failed', error.message))
     }
     const watch = navigator.geolocation.watchPosition(
@@ -34,7 +38,7 @@ export function useGeoSharing(active: boolean, userId: string) {
         const { latitude: lat, longitude: lng, accuracy, speed } = pos.coords
         latest = { lat, lng, accuracy, speed: Number.isFinite(speed) ? speed : null, t: Date.now() }
         setState('on')
-        setMe({ lat, lng, updated_at: new Date().toISOString() })
+        setMe({ lat, lng, accuracy, speed: latest.speed, updated_at: new Date().toISOString() })
         if (!sent || distanceM(sent, latest) > 25 || latest.t - sent.t > 60_000) send(latest)
       },
       (err) => setState(err.code === err.PERMISSION_DENIED ? 'denied' : 'off'),

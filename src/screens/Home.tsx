@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { Map as MlMap } from 'maplibre-gl'
-import { ChevronDown, ChevronUp, LocateFixed, MapPin, Moon, Navigation, Pause, Play, Settings, Share2, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Layers, MapPin, Moon, Navigation, Pause, Play, Settings, Share2, Trash2, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useLang, type TKey } from '../lib/i18n'
 import { useToast } from '../lib/toast'
 import { read, remove, write } from '../lib/store'
-import { isExpired, type Loc, type Meeting, type Member, type MyMembership } from '../lib/types'
+import { REACTIONS, isExpired, type Loc, type Meeting, type Member, type MyMembership, type Reaction } from '../lib/types'
+import { activity } from '../lib/activity'
+import { fitPoints, fmtDist, haversineM, walkMin } from '../lib/mapUtil'
+import { styleUrl, useMapPrefs } from '../lib/mapPrefs'
 import { useGeoSharing } from '../lib/useGeoSharing'
-import MapView, { type Pin } from '../components/MapView'
+import MapView, { type Accuracy, type Pin } from '../components/MapView'
+import MapControls from '../components/MapControls'
+import MapSheet from '../components/MapSheet'
+import FriendsRow, { type Friend } from '../components/FriendsRow'
 import CirclesSheet from '../components/CirclesSheet'
 import SettingsSheet from '../components/SettingsSheet'
 import { Button, IconButton, Sheet } from '../components/ui'
@@ -41,13 +47,18 @@ export default function Home({ session, dark, setDark }: Props) {
   const [members, setMembers] = useState<Member[]>([])
   const [locs, setLocs] = useState<Record<string, Loc>>({})
   const [meeting, setMeeting] = useState<Meeting | null>(null)
-  const [sheet, setSheet] = useState<'circles' | 'settings' | 'consent' | null>(null)
+  const [sheet, setSheet] = useState<'circles' | 'settings' | 'map' | 'consent' | null>(null)
+  const [prefs, setPref] = useMapPrefs()
+  const [threeD, setThreeD] = useState(false)
   const [picking, setPicking] = useState(false)
   const [expanded, setExpanded] = useState(true)
   const [consent, setConsent] = useState(() => read('blup-consent') === '1')
   const [now, setNow] = useState(() => Date.now())
   const mapRef = useRef<MlMap | null>(null)
   const memberIds = useRef(new Set<string>())
+  const membersRef = useRef<Member[]>([])
+  const burstRef = useRef<((fromId: string, emoji: string) => void) | null>(null)
+  const vibrateRef = useRef(prefs.vibrate)
   const consentAsked = useRef(false)
 
   const fail = useCallback((e: { message: string }) => toast(t('error') + e.message), [toast, t])
@@ -66,7 +77,7 @@ export default function Home({ session, dark, setDark }: Props) {
   const loadCircle = useCallback(
     async (id: string) => {
       const [m, mp] = await Promise.all([
-        db.from('memberships').select('user_id, role, sharing_enabled, profiles(display_name, color, avatar_url)').eq('circle_id', id),
+        db.from('memberships').select('user_id, role, sharing_enabled, profiles(*)').eq('circle_id', id),  // profiles(*): still loads if migration 002 isn't applied yet
         db.from('meeting_points').select('*').eq('circle_id', id).maybeSingle(),
       ])
       if (m.error) return fail(m.error)
@@ -125,6 +136,37 @@ export default function Home({ session, dark, setDark }: Props) {
     }
   }, [db, circleId])
 
+  useEffect(() => {
+    membersRef.current = members
+    vibrateRef.current = prefs.vibrate
+  })
+
+  // Incoming reactions get their own channel so a missing `reactions` table can't break location realtime
+  useEffect(() => {
+    const ch = db
+      .channel(`reactions-${uid}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions', filter: `to_user=eq.${uid}` }, (p) => {
+        const r = p.new as Reaction
+        if (!REACTIONS.includes(r.emoji)) return
+        const name = membersRef.current.find((m) => m.user_id === r.from_user)?.profiles?.display_name
+        toast(name ? `${name}: ${r.emoji}` : r.emoji)
+        burstRef.current?.(r.from_user, r.emoji)
+        if (vibrateRef.current) navigator.vibrate?.(60)
+      })
+      .subscribe()
+    return () => {
+      db.removeChannel(ch)
+    }
+  }, [db, uid, toast])
+
+  async function react(toId: string, emoji: string) {
+    if (!circleId) return
+    // only the allowed columns: from_user defaults to auth.uid() server-side
+    const { error } = await db.from('reactions').insert({ circle_id: circleId, to_user: toId, emoji })
+    if (error) return toast(error.code === 'P0001' ? t('slowDown') : t('error') + error.message)
+    toast(t('sent', { e: emoji }))
+  }
+
   // ─── JOIN (also from an invite link saved before login) ───
   const joinCircle = useCallback(
     async (code: string) => {
@@ -172,7 +214,9 @@ export default function Home({ session, dark, setDark }: Props) {
 
   // ─── SHARING ───
   const sharingActive = consent && !!mine?.some((m) => m.sharing_enabled && !isExpired(m.circles, now))
-  const geo = useGeoSharing(sharingActive, uid)
+  // until my profile has loaded, assume the privacy-safe answer: don't send speed
+  const myShowActivity = members.find((m) => m.user_id === uid)?.profiles?.show_activity ?? false
+  const geo = useGeoSharing(sharingActive, uid, myShowActivity)
   const sharingHere = consent && !!current?.sharing_enabled && !expired
 
   useEffect(() => {
@@ -239,6 +283,10 @@ export default function Home({ session, dark, setDark }: Props) {
             color: m.profiles?.color ?? '#38BDF8',
             label: isMe ? t('you') : name,
             initial: name.slice(0, 1).toUpperCase(),
+            emoji: m.profiles?.emoji ?? null,
+            // never show a badge (not even the sleepy one) for someone who turned activity off
+            activity: (m.profiles?.show_activity ?? true) ? activity(l.updated_at, l.speed, now) : null,
+            ago: isMe ? t('agoNow') : ago(l.updated_at, now, t),
             isMe,
             stale: !isMe && now - Date.parse(l.updated_at) > STALE_MS,
           },
@@ -251,10 +299,65 @@ export default function Home({ session, dark, setDark }: Props) {
     if (geo.me) mapRef.current?.flyTo({ center: [geo.me.lng, geo.me.lat], zoom: 15 })
   }
 
+  const accuracy: Accuracy | null = useMemo(() => (geo.me ? { lat: geo.me.lat, lng: geo.me.lng, r: geo.me.accuracy } : null), [geo.me])
+  const myPin = pins.find((p) => p.isMe)
+  const meetInfo = meeting && myPin ? haversineM(myPin, meeting) : null
+
+  const statusOf = (m: Member) => {
+    const l = locs[m.user_id]
+    return !m.sharing_enabled ? t('paused') : m.user_id === uid && geo.me ? t('agoNow') : l ? ago(l.updated_at, now, t) : t('noLocation')
+  }
+  // me first, then alphabetical
+  const sorted = useMemo(
+    () =>
+      [...members].sort(
+        (a, b) => +(b.user_id === uid) - +(a.user_id === uid) || (a.profiles?.display_name ?? '').localeCompare(b.profiles?.display_name ?? '', 'ro'),
+      ),
+    [members, uid],
+  )
+  const friends: Friend[] = sorted.map((m) => {
+    const p = pins.find((x) => x.id === m.user_id)
+    const name = m.profiles?.display_name || '?'
+    return {
+      id: m.user_id,
+      face: m.profiles?.emoji || name.slice(0, 1).toUpperCase(),
+      color: m.profiles?.color ?? '#38BDF8',
+      name: m.user_id === uid ? t('you') : name,
+      status: statusOf(m),
+      activity: p?.activity ?? null,
+      disabled: !p,
+    }
+  })
+
   // ─── UI ───
   return (
     <div className="relative h-full overflow-hidden">
-      <MapView pins={pins} meeting={meeting} dark={dark} picking={picking} onPick={setMeetingAt} fitKey={circleId} mapRef={mapRef} />
+      <MapView
+        pins={pins}
+        meeting={meeting}
+        styleUrl={styleUrl(prefs.style, dark)}
+        threeD={threeD}
+        showNames={prefs.names}
+        accuracy={prefs.acc ? accuracy : null}
+        picking={picking}
+        onPick={setMeetingAt}
+        onReact={react}
+        fitKey={circleId}
+        mapRef={mapRef}
+        burstRef={burstRef}
+      />
+
+      <div className="pointer-events-none absolute top-[calc(max(env(safe-area-inset-top),12px)+64px)] right-3">
+        <MapControls
+          mapRef={mapRef}
+          threeD={threeD}
+          onToggle3D={() => setThreeD(!threeD)}
+          onFit={() => mapRef.current && fitPoints(mapRef.current, pins)}
+          onMe={centerOnMe}
+          canFit={pins.length > 0}
+          canMe={!!geo.me}
+        />
+      </div>
 
       <header className="pointer-events-none absolute inset-x-0 top-0 flex items-start gap-2 p-3 pt-[max(env(safe-area-inset-top),12px)]">
         <button
@@ -266,6 +369,9 @@ export default function Home({ session, dark, setDark }: Props) {
           <ChevronDown size={18} className="shrink-0 text-[var(--muted)]" />
         </button>
         <span className="flex-1" />
+        <IconButton label={t('map')} onClick={() => setSheet('map')} className="pointer-events-auto">
+          <Layers size={20} />
+        </IconButton>
         <IconButton label={t('settings')} onClick={() => setSheet('settings')} className="pointer-events-auto">
           <Settings size={20} />
         </IconButton>
@@ -283,14 +389,17 @@ export default function Home({ session, dark, setDark }: Props) {
       )}
 
       {current && (
-        <section className="absolute inset-x-0 bottom-0 flex flex-col items-end gap-3 p-3 pb-[max(env(safe-area-inset-bottom),12px)]">
-          {geo.me && (
-            <IconButton label={t('center')} onClick={centerOnMe}>
-              <LocateFixed size={20} />
-            </IconButton>
-          )}
+        <section className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-2 p-3 pb-[max(env(safe-area-inset-bottom),12px)]">
+          <FriendsRow
+            items={friends}
+            label={t('friends')}
+            onPick={(id) => {
+              const p = pins.find((x) => x.id === id)
+              if (p) mapRef.current?.flyTo({ center: [p.lng, p.lat], zoom: 16 })
+            }}
+          />
 
-          <div className="w-full rounded-3xl bg-[var(--surface)] p-4 shadow-xl sm:mx-auto sm:max-w-md">
+          <div className="pointer-events-auto w-full rounded-3xl bg-[var(--surface)] p-4 shadow-xl sm:mx-auto sm:max-w-md">
             <div className="flex items-center gap-3">
               <div className="min-w-0 flex-1">
                 <h2 className="flex items-center gap-1.5 truncate font-bold">
@@ -301,6 +410,9 @@ export default function Home({ session, dark, setDark }: Props) {
                   {members.length} 👥
                   {current.circles.expires_at && ` · ${expired ? t('expired') : t('expiresIn', { t: timeLeft(current.circles.expires_at, now) })}`}
                 </p>
+                {prefs.dist && meetInfo != null && (
+                  <p className="text-xs font-semibold text-[var(--accent)]">📍 {t('walkMin', { d: fmtDist(meetInfo), n: walkMin(meetInfo) })}</p>
+                )}
               </div>
               {!expired && (
                 <button
@@ -330,10 +442,9 @@ export default function Home({ session, dark, setDark }: Props) {
             {expanded && (
               <>
                 <ul className="mt-3 flex max-h-[30vh] flex-col gap-1 overflow-y-auto">
-                  {members.map((m) => {
+                  {sorted.map((m) => {
                     const isMe = m.user_id === uid
-                    const l = locs[m.user_id]
-                    const status = !m.sharing_enabled ? t('paused') : isMe && geo.me ? t('agoNow') : l ? ago(l.updated_at, now, t) : t('noLocation')
+                    const status = statusOf(m)
                     return (
                       <li key={m.user_id}>
                         <button
@@ -348,7 +459,7 @@ export default function Home({ session, dark, setDark }: Props) {
                             className="grid size-8 shrink-0 place-items-center rounded-full text-sm font-bold text-[#0a1128]"
                             style={{ background: m.profiles?.color ?? '#38BDF8' }}
                           >
-                            {(m.profiles?.display_name || '?').slice(0, 1).toUpperCase()}
+                            {m.profiles?.emoji || (m.profiles?.display_name || '?').slice(0, 1).toUpperCase()}
                           </span>
                           <span className="flex-1 truncate text-sm font-semibold">
                             {m.profiles?.display_name || '?'}
@@ -408,6 +519,8 @@ export default function Home({ session, dark, setDark }: Props) {
           onClose={mine?.length ? () => setSheet(null) : undefined}
         />
       )}
+
+      {sheet === 'map' && <MapSheet prefs={prefs} setPref={setPref} onClose={() => setSheet(null)} />}
 
       {sheet === 'settings' && (
         <SettingsSheet uid={uid} dark={dark} setDark={setDark} onSaved={() => circleId && loadCircle(circleId)} onClose={() => setSheet(null)} />

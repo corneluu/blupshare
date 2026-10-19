@@ -74,44 +74,188 @@ button {
   animation: wobble 2.4s ease-in-out infinite;
 }
 
-/* ─── map pins (DOM markers) ─── */
+/* ─── map pins (DOM markers) ───
+   --pin (px) and data-lvl (0 small / 1 medium / 2 big) live on the map container; MapView updates them on zoom */
+.maplibregl-map {
+  --pin: 40px;
+}
 .blup-pin {
   position: relative;
-  width: 40px;
-  height: 40px;
+  z-index: 1;
+  width: var(--pin);
+  height: var(--pin);
+  cursor: pointer;
+  transition:
+    width 0.25s,
+    height 0.25s;
 }
-.blup-pin span {
+.blup-pin.me {
+  z-index: 3;
+  cursor: default;
+}
+.blup-bubble {
+  position: relative;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 100%;
+  height: 100%;
   border-radius: 9999px;
-  border: 3px solid #fff;
-  color: #0a1128;
-  font: 800 16px Inter, system-ui, sans-serif;
+  border: 3px solid var(--c, var(--accent));
+  background: var(--surface);
+  color: var(--text);
+  font: 800 calc(var(--pin) * 0.5) / 1 Inter, system-ui, sans-serif;
   box-shadow: 0 6px 16px rgb(0 0 0 / 0.3);
+  transition: font-size 0.25s;
 }
-.blup-pin.me span {
-  box-shadow:
-    0 0 0 4px var(--accent),
-    0 6px 16px rgb(0 0 0 / 0.3);
-}
-.blup-pin.stale span {
+.blup-pin.stale .blup-bubble {
   opacity: 0.55;
   filter: grayscale(0.7);
 }
-.blup-pin small {
+.blup-pin.me .blup-bubble {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 6px 16px rgb(0 0 0 / 0.3);
+}
+.blup-pin.me .blup-bubble::after {
+  content: '';
   position: absolute;
-  top: 44px;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 3px solid var(--accent);
+  animation: blup-pulse 2s ease-out infinite;
+}
+@keyframes blup-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+.blup-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  min-width: calc(var(--pin) * 0.42);
+  height: calc(var(--pin) * 0.42);
+  border-radius: 9999px;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+  font: normal 400 calc(var(--pin) * 0.26) / 1 system-ui, sans-serif;
+}
+.blup-badge:empty {
+  display: none;
+}
+.blup-tag {
+  position: absolute;
+  top: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  align-items: center;
   padding: 1px 8px;
-  border-radius: 9999px;
+  border-radius: 12px;
   background: var(--surface);
   color: var(--text);
   font: 600 11px Inter, system-ui, sans-serif;
   white-space: nowrap;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+  pointer-events: none;
+}
+.blup-tag small {
+  display: none;
+  color: var(--muted);
+  font: 500 10px Inter, system-ui, sans-serif;
+}
+[data-lvl='1'] .blup-tag,
+[data-lvl='2'] .blup-tag {
+  display: flex;
+}
+[data-lvl='2'] .blup-tag small {
+  display: block;
+}
+[data-names='0'][data-lvl] .blup-tag {
+  display: none;
+}
+.blup-group {
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.blup-group .blup-bubble {
+  flex: none;
+  width: calc(var(--pin) * 0.8);
+  height: calc(var(--pin) * 0.8);
+  margin-left: calc(var(--pin) * -0.3);
+  font-size: calc(var(--pin) * 0.4);
+  transition:
+    width 0.25s,
+    height 0.25s,
+    font-size 0.25s;
+}
+.blup-group .blup-bubble:first-child {
+  margin-left: 0;
+}
+.blup-more {
+  margin-left: 4px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: var(--accent);
+  color: #fff;
+  font: 800 12px / 1.2 Inter, system-ui, sans-serif;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+}
+.blup-ring {
+  width: var(--d, 0);
+  height: var(--d, 0);
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+}
+.blup-pop {
+  z-index: 5;
+}
+.blup-pop-in {
+  transform: translateY(calc(var(--pin) * -0.5 - 12px));
+  animation: blup-in 0.2s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+@keyframes blup-in {
+  from {
+    scale: 0.85;
+    opacity: 0;
+  }
+}
+.blup-float {
+  z-index: 6;
+  pointer-events: none;
+}
+.blup-float span {
+  display: block;
+  font-size: 56px;
+  line-height: 1;
+  animation: blup-float 1.8s ease-out forwards;
+}
+@keyframes blup-float {
+  0% {
+    transform: translateY(-10px) scale(0.4);
+    opacity: 0;
+  }
+  15% {
+    transform: translateY(-40px) scale(1.2);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-170px) scale(1);
+    opacity: 0;
+  }
 }
 .blup-meet {
   font-size: 34px;
