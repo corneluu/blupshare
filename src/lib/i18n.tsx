@@ -1,0 +1,155 @@
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { read, write } from './store'
+
+// ═══════════════════════════════════════════════════════════════
+// TEXTE — editează aici. Orice cheie din `ro` trebuie să existe și în `en`.
+// {n} / {t} se înlocuiesc automat cu valori.
+// ═══════════════════════════════════════════════════════════════
+const ro = {
+  tagline: 'Vezi unde sunt prietenii în seara asta.',
+  emailPlaceholder: 'email@exemplu.ro',
+  password: 'Parolă (min. 8 caractere)',
+  signIn: 'Intră în cont',
+  signUp: 'Creează cont',
+  toSignUp: 'N-ai cont? Creează unul',
+  toSignIn: 'Ai deja cont? Intră',
+  badLogin: 'Email sau parolă greșită',
+  checkEmail: 'Verifică emailul ca să confirmi contul. 📬',
+  google: 'Continuă cu Google',
+  or: 'sau',
+  setupMissing: 'Lipsește configurarea Supabase (.env).',
+  noCircles: 'Nu ești încă în niciun cerc. Creează unul sau intră cu un cod.',
+  circles: 'Cercurile tale',
+  createCircle: 'Cerc nou',
+  joinCircle: 'Intră cu cod',
+  circleName: 'Numele cercului',
+  nightOut: 'Night out 🌙 (expiră în 12 ore)',
+  inviteCode: 'Cod de invitație',
+  create: 'Creează',
+  join: 'Intră',
+  invite: 'Invită',
+  inviteText: 'Intră în cercul meu pe Blup 🫧',
+  copied: 'Link copiat!',
+  sharingOn: 'Partajezi',
+  sharingOff: 'Pe pauză',
+  you: 'tu',
+  paused: 'pe pauză',
+  noLocation: 'fără locație',
+  agoNow: 'acum',
+  agoMin: 'acum {n} min',
+  agoH: 'acum {n} h',
+  meetingPoint: 'Punct de întâlnire',
+  tapMap: 'Atinge harta unde vă întâlniți',
+  clearMeeting: 'Șterge punctul',
+  navigate: 'Navighează',
+  expiresIn: 'expiră în {t}',
+  expired: 'expirat',
+  leave: 'Părăsește cercul',
+  deleteCircle: 'Șterge cercul',
+  confirmLeave: 'Sigur părăsești cercul?',
+  confirmDelete: 'Ștergi cercul pentru toți membrii?',
+  signOut: 'Deconectare',
+  yourName: 'Numele tău',
+  save: 'Salvează',
+  saved: 'Salvat ✓',
+  settings: 'Setări',
+  language: 'Limba',
+  darkMode: 'Mod întunecat',
+  consentTitle: 'Înainte să pornești',
+  consentBody:
+    'Blup trimite locația ta doar cât aplicația e deschisă. O văd doar membrii cercurilor tale în care partajarea e pornită. Poți pune pauză oricând, separat pentru fiecare cerc. Nu folosim locația pentru reclame.',
+  consentOk: 'Am înțeles, pornește',
+  notNow: 'Nu acum',
+  geoDenied: 'Locația e blocată în browser. Permite-o din setările site-ului.',
+  geoUnsupported: 'Browserul nu suportă localizarea.',
+  error: 'Ceva n-a mers: ',
+  invalidCode: 'Cod invalid',
+  circleExpired: 'Cercul a expirat',
+  joined: 'Ai intrat în cerc 🎉',
+  center: 'Centrează pe mine',
+  close: 'Închide',
+}
+
+const en: Record<keyof typeof ro, string> = {
+  tagline: 'See where your friends are tonight.',
+  emailPlaceholder: 'you@example.com',
+  password: 'Password (min. 8 characters)',
+  signIn: 'Sign in',
+  signUp: 'Create account',
+  toSignUp: 'No account? Create one',
+  toSignIn: 'Already have an account? Sign in',
+  badLogin: 'Wrong email or password',
+  checkEmail: 'Check your email to confirm your account. 📬',
+  google: 'Continue with Google',
+  or: 'or',
+  setupMissing: 'Supabase config is missing (.env).',
+  noCircles: "You're not in a circle yet. Create one or join with a code.",
+  circles: 'Your circles',
+  createCircle: 'New circle',
+  joinCircle: 'Join with code',
+  circleName: 'Circle name',
+  nightOut: 'Night out 🌙 (expires in 12 hours)',
+  inviteCode: 'Invite code',
+  create: 'Create',
+  join: 'Join',
+  invite: 'Invite',
+  inviteText: 'Join my circle on Blup 🫧',
+  copied: 'Link copied!',
+  sharingOn: 'Sharing',
+  sharingOff: 'Paused',
+  you: 'you',
+  paused: 'paused',
+  noLocation: 'no location',
+  agoNow: 'just now',
+  agoMin: '{n} min ago',
+  agoH: '{n} h ago',
+  meetingPoint: 'Meeting point',
+  tapMap: 'Tap the map where you meet',
+  clearMeeting: 'Clear point',
+  navigate: 'Navigate',
+  expiresIn: 'expires in {t}',
+  expired: 'expired',
+  leave: 'Leave circle',
+  deleteCircle: 'Delete circle',
+  confirmLeave: 'Leave this circle?',
+  confirmDelete: 'Delete this circle for all members?',
+  signOut: 'Sign out',
+  yourName: 'Your name',
+  save: 'Save',
+  saved: 'Saved ✓',
+  settings: 'Settings',
+  language: 'Language',
+  darkMode: 'Dark mode',
+  consentTitle: 'Before you start',
+  consentBody:
+    'Blup sends your location only while the app is open. Only members of your circles where sharing is on can see it. You can pause any time, separately for each circle. We never use your location for ads.',
+  consentOk: 'Got it, start',
+  notNow: 'Not now',
+  geoDenied: 'Location is blocked in the browser. Allow it in the site settings.',
+  geoUnsupported: "This browser can't share location.",
+  error: 'Something went wrong: ',
+  invalidCode: 'Invalid code',
+  circleExpired: 'This circle has expired',
+  joined: 'You joined the circle 🎉',
+  center: 'Center on me',
+  close: 'Close',
+}
+
+export type Lang = 'ro' | 'en'
+export type TKey = keyof typeof ro
+const dict = { ro, en }
+
+type Ctx = { lang: Lang; setLang: (l: Lang) => void; t: (k: TKey, vars?: Record<string, string | number>) => string }
+const LangCtx = createContext<Ctx>(null!)
+
+export function LangProvider({ children }: { children: ReactNode }) {
+  const [lang, setLang] = useState<Lang>(() => (read('blup-lang') === 'en' ? 'en' : 'ro'))
+  useEffect(() => {
+    write('blup-lang', lang)
+    document.documentElement.lang = lang
+  }, [lang])
+  const t: Ctx['t'] = (k, vars) => dict[lang][k].replace(/\{(\w+)\}/g, (_, v: string) => String(vars?.[v] ?? ''))
+  return <LangCtx.Provider value={{ lang, setLang, t }}>{children}</LangCtx.Provider>
+}
+
+export const useLang = () => useContext(LangCtx)
